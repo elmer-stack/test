@@ -1,11 +1,510 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-TW">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>夜市資料管理後台</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- FontAwesome 圖示套件 -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <!-- React & ReactDOM CDN -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <!-- Babel CDN (用於在瀏覽器直接解析 JSX) -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- Firebase JS SDK (Compat 版本) -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 </head>
-<body>
-    test20260923
+<body class="bg-gray-50 text-gray-800 font-sans min-h-screen">
+
+  <!-- React 渲染根節點 -->
+  <div id="root"></div>
+
+  <!-- React JSX 程式碼 -->
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // Firebase 連線設定
+    const firebaseConfig = {
+      apiKey: "AIzaSyBwUineN_xl21Sw04sVQEK3RQ4ldbNnv8o",
+      authDomain: "test123-a143c.firebaseapp.com",
+      projectId: "test123-a143c",
+      storageBucket: "test123-a143c.firebasestorage.app",
+      messagingSenderId: "533136080003",
+      appId: "1:533136080003:web:e985d82b0e2b5912e16fb6",
+      measurementId: "G-BFZ1SK2GPT"
+    };
+
+    // 初始化 Firebase
+    if (!firebase.apps.length) {
+      firebase.initializeApp(firebaseConfig);
+    }
+    const db = firebase.firestore();
+    const COLLECTION_NAME = "NightMarket";
+
+    function App() {
+      const [items, setItems] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [isModalOpen, setIsModalOpen] = useState(false);
+      const [currentEditItem, setCurrentEditItem] = useState(null);
+      const [formData, setFormData] = useState({
+        name: "",
+        text: "",
+        img_url: "",
+        address: "",
+        lon: "",
+        lat: ""
+      });
+      const [isSubmitting, setIsSubmitting] = useState(false);
+      const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+
+      // 即時監聽 Firestore 資料變化
+      useEffect(() => {
+        const unsubscribe = db.collection(COLLECTION_NAME).onSnapshot(
+          (snapshot) => {
+            const list = snapshot.docs.map((doc) => ({
+              id: doc.id,
+              ...doc.data()
+            }));
+            setItems(list);
+            setLoading(false);
+          },
+          (error) => {
+            console.error("讀取 NightMarket 資料庫失敗：", error);
+            setLoading(false);
+          }
+        );
+
+        return () => unsubscribe();
+      }, []);
+
+      // 打開新增彈出視窗
+      const handleOpenAddModal = () => {
+        setCurrentEditItem(null);
+        setFormData({
+          name: "",
+          text: "",
+          img_url: "",
+          address: "",
+          lon: "",
+          lat: ""
+        });
+        setIsModalOpen(true);
+      };
+
+      // 打開編輯彈出視窗
+      const handleOpenEditModal = (item) => {
+        setCurrentEditItem(item);
+        setFormData({
+          name: item.name || "",
+          text: item.text || "",
+          img_url: item.img_url || "",
+          address: item.address || "",
+          lon: item.lon !== undefined && item.lon !== null ? item.lon : "",
+          lat: item.lat !== undefined && item.lat !== null ? item.lat : ""
+        });
+        setIsModalOpen(true);
+      };
+
+      // 處理表單欄位變更
+      const handleInputChange = (e) => {
+        const { name, value } = e.target;
+        setFormData((prev) => ({ ...prev, [name]: value }));
+      };
+
+      // 表單送出 (新增或修改)
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!formData.name.trim()) {
+          alert("請輸入夜市名稱！");
+          return;
+        }
+
+        setIsSubmitting(true);
+
+        // 轉換經緯度為 float 數字型態 (若為空字串則存為 null)
+        const parsedLon = formData.lon !== "" ? parseFloat(formData.lon) : null;
+        const parsedLat = formData.lat !== "" ? parseFloat(formData.lat) : null;
+
+        const dataToSave = {
+          name: formData.name.trim(),
+          text: formData.text.trim(),
+          img_url: formData.img_url.trim(),
+          address: formData.address.trim(),
+          lon: isNaN(parsedLon) ? null : parsedLon,
+          lat: isNaN(parsedLat) ? null : parsedLat
+        };
+
+        try {
+          if (currentEditItem) {
+            // 編輯既有資料
+            await db.collection(COLLECTION_NAME).doc(currentEditItem.id).update(dataToSave);
+          } else {
+            // 新增資料
+            await db.collection(COLLECTION_NAME).add(dataToSave);
+          }
+          setIsModalOpen(false);
+        } catch (error) {
+          console.error("儲存失敗：", error);
+          alert("儲存失敗：" + error.message);
+        } finally {
+          setIsSubmitting(false);
+        }
+      };
+
+      // 刪除資料
+      const handleDelete = async (id) => {
+        try {
+          await db.collection(COLLECTION_NAME).doc(id).delete();
+          setDeleteConfirmId(null);
+        } catch (error) {
+          console.error("刪除失敗：", error);
+          alert("刪除失敗：" + error.message);
+        }
+      };
+
+      return (
+        <div className="min-h-screen bg-gray-50 flex flex-col">
+          {/* 頂部標題列 */}
+          <header className="bg-white border-b border-gray-200 sticky top-0 z-10 shadow-sm">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+              <div className="flex items-center space-x-3">
+                <div className="bg-indigo-600 text-white p-2.5 rounded-xl shadow-sm">
+                  <i className="fa-solid fa-store text-xl"></i>
+                </div>
+                <div>
+                  <h1 className="text-xl font-bold text-gray-900">夜市資料管理後台</h1>
+                  <p className="text-xs text-gray-500">NightMarket Data Management System</p>
+                </div>
+              </div>
+
+              {/* 新增按鈕 */}
+              <button
+                onClick={handleOpenAddModal}
+                className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-medium shadow-sm transition duration-150 active:scale-95"
+              >
+                <i className="fa-solid fa-plus"></i>
+                <span>新增夜市</span>
+              </button>
+            </div>
+          </header>
+
+          {/* 主要內容區域 */}
+          <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+              <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-gray-50/50">
+                <h2 className="text-base font-semibold text-gray-800">夜市列表</h2>
+                <span className="text-xs font-medium px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-full border border-indigo-100">
+                  共 {items.length} 筆資料
+                </span>
+              </div>
+
+              {loading ? (
+                <div className="flex flex-col items-center justify-center py-20 text-gray-500">
+                  <i className="fa-solid fa-circle-notch fa-spin text-3xl text-indigo-600 mb-3"></i>
+                  <p className="text-sm">資料庫連線載入中...</p>
+                </div>
+              ) : items.length === 0 ? (
+                <div className="text-center py-20">
+                  <i className="fa-solid fa-folder-open text-4xl text-gray-300 mb-3"></i>
+                  <p className="text-gray-500 mb-4 text-sm">目前 NightMarket 資料表中沒有任何資料</p>
+                  <button
+                    onClick={handleOpenAddModal}
+                    className="text-indigo-600 hover:text-indigo-800 font-medium text-sm inline-flex items-center gap-1"
+                  >
+                    <i className="fa-solid fa-plus"></i> 點此新增第一筆夜市資料
+                  </button>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-gray-100/70 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                        <th className="py-3.5 px-6 w-28">縮圖</th>
+                        <th className="py-3.5 px-6 w-40">名稱</th>
+                        <th className="py-3.5 px-6 w-48">地址</th>
+                        <th className="py-3.5 px-6 w-40">經緯度</th>
+                        <th className="py-3.5 px-6">描述</th>
+                        <th className="py-3.5 px-6 w-36 text-center">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200 text-sm">
+                      {items.map((item) => (
+                        <tr key={item.id} className="hover:bg-gray-50/80 transition duration-150">
+                          {/* 縮圖 */}
+                          <td className="py-4 px-6">
+                            {item.img_url ? (
+                              <img
+                                src={item.img_url}
+                                alt={item.name}
+                                className="w-16 h-12 object-cover rounded-lg border border-gray-200 shadow-sm bg-gray-100"
+                                onError={(e) => {
+                                  e.target.onerror = null;
+                                  e.target.src = "https://via.placeholder.com/150?text=無效連結";
+                                }}
+                              />
+                            ) : (
+                              <div className="w-16 h-12 bg-gray-100 border border-gray-200 rounded-lg flex items-center justify-center text-gray-400 text-xs">
+                                無圖片
+                              </div>
+                            )}
+                          </td>
+
+                          {/* 名稱 */}
+                          <td className="py-4 px-6 font-semibold text-gray-900">
+                            {item.name}
+                          </td>
+
+                          {/* 地址 */}
+                          <td className="py-4 px-6 text-gray-700">
+                            {item.address ? (
+                              <span className="flex items-center gap-1.5">
+                                <i className="fa-solid fa-location-dot text-indigo-500 text-xs"></i>
+                                {item.address}
+                              </span>
+                            ) : (
+                              <span className="text-gray-400 italic">無地址</span>
+                            )}
+                          </td>
+
+                          {/* 經緯度 */}
+                          <td className="py-4 px-6">
+                            {(item.lat !== undefined && item.lat !== null && item.lat !== "") || 
+                             (item.lon !== undefined && item.lon !== null && item.lon !== "") ? (
+                              <div className="text-xs font-mono space-y-0.5">
+                                <div className="text-gray-600"><span className="text-gray-400">緯:</span> {item.lat ?? "-"}</div>
+                                <div className="text-gray-600"><span className="text-gray-400">經:</span> {item.lon ?? "-"}</div>
+                              </div>
+                            ) : (
+                              <span className="text-gray-400 italic text-xs">無經緯度</span>
+                            )}
+                          </td>
+
+                          {/* 描述 */}
+                          <td className="py-4 px-6 text-gray-600 leading-relaxed max-w-xs whitespace-pre-wrap">
+                            {item.text || <span className="text-gray-400 italic">無描述</span>}
+                          </td>
+
+                          {/* 操作按鈕 */}
+                          <td className="py-4 px-6 text-center">
+                            <div className="flex items-center justify-center gap-2">
+                              <button
+                                onClick={() => handleOpenEditModal(item)}
+                                className="inline-flex items-center gap-1 bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 px-3 py-1.5 rounded-lg text-xs font-medium transition"
+                                title="編輯"
+                              >
+                                <i className="fa-solid fa-pen-to-square"></i>
+                                編輯
+                              </button>
+                              <button
+                                onClick={() => setDeleteConfirmId(item.id)}
+                                className="inline-flex items-center gap-1 bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 px-3 py-1.5 rounded-lg text-xs font-medium transition"
+                                title="刪除"
+                              >
+                                <i className="fa-solid fa-trash-can"></i>
+                                刪除
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </main>
+
+          {/* 新增 / 編輯 彈出視窗 (Modal) */}
+          {isModalOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+              <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full overflow-hidden border border-gray-100 transform transition-all my-8 max-h-[90vh] flex flex-col">
+                <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-gray-50/80">
+                  <h3 className="text-base font-bold text-gray-800">
+                    {currentEditItem ? "編輯夜市資料" : "新增夜市資料"}
+                  </h3>
+                  <button
+                    onClick={() => setIsModalOpen(false)}
+                    className="text-gray-400 hover:text-gray-600 transition"
+                  >
+                    <i className="fa-solid fa-xmark text-lg"></i>
+                  </button>
+                </div>
+
+                <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto flex-1">
+                  {/* 名稱輸入框 */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      名稱 <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      name="name"
+                      required
+                      placeholder="請輸入夜市名稱（例：逢甲夜市）"
+                      value={formData.name}
+                      onChange={handleInputChange}
+                      className="w-full px-3.5 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition text-sm"
+                    />
+                  </div>
+
+                  {/* 地址輸入框 */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      地址
+                    </label>
+                    <input
+                      type="text"
+                      name="address"
+                      placeholder="請輸入夜市地址（例：台中市西屯區文華路）"
+                      value={formData.address}
+                      onChange={handleInputChange}
+                      className="w-full px-3.5 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition text-sm"
+                    />
+                  </div>
+
+                  {/* 經度與緯度 (並排) */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        緯度 (lat)
+                      </label>
+                      <input
+                        type="number"
+                        step="any"
+                        name="lat"
+                        placeholder="例：24.1789"
+                        value={formData.lat}
+                        onChange={handleInputChange}
+                        className="w-full px-3.5 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition text-sm font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        經度 (lon)
+                      </label>
+                      <input
+                        type="number"
+                        step="any"
+                        name="lon"
+                        placeholder="例：120.6467"
+                        value={formData.lon}
+                        onChange={handleInputChange}
+                        className="w-full px-3.5 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition text-sm font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  {/* 描述輸入框 */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      描述
+                    </label>
+                    <textarea
+                      name="text"
+                      rows="3"
+                      placeholder="請輸入夜市相關描述或特色介紹..."
+                      value={formData.text}
+                      onChange={handleInputChange}
+                      className="w-full px-3.5 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition text-sm resize-none"
+                    ></textarea>
+                  </div>
+
+                  {/* 縮圖網址輸入框 */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      縮圖網址 (img_url)
+                    </label>
+                    <input
+                      type="url"
+                      name="img_url"
+                      placeholder="https://example.com/image.jpg"
+                      value={formData.img_url}
+                      onChange={handleInputChange}
+                      className="w-full px-3.5 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition text-sm"
+                    />
+                    
+                    {/* 圖片預覽區域 */}
+                    {formData.img_url && (
+                      <div className="mt-2">
+                        <span className="text-xs text-gray-500 block mb-1">縮圖預覽：</span>
+                        <img
+                          src={formData.img_url}
+                          alt="縮圖預覽"
+                          className="h-24 w-auto rounded-lg border border-gray-200 object-cover"
+                          onError={(e) => {
+                            e.target.onerror = null;
+                            e.target.src = "https://via.placeholder.com/150?text=連結無效";
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 彈窗底部按鈕 */}
+                  <div className="flex justify-end gap-3 pt-4 border-t border-gray-100 sticky bottom-0 bg-white">
+                    <button
+                      type="button"
+                      onClick={() => setIsModalOpen(false)}
+                      className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSubmitting}
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium shadow-sm transition disabled:opacity-50 flex items-center gap-1.5"
+                    >
+                      {isSubmitting && <i className="fa-solid fa-circle-notch fa-spin"></i>}
+                      <span>{currentEditItem ? "更新" : "儲存"}</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* 刪除確認 Modal */}
+          {deleteConfirmId && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+              <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6 text-center border border-gray-100">
+                <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mx-auto mb-4 text-xl">
+                  <i className="fa-solid fa-triangle-exclamation"></i>
+                </div>
+                <h3 className="text-base font-bold text-gray-800 mb-1">確認要刪除嗎？</h3>
+                <p className="text-xs text-gray-500 mb-6">這項操作將會從 Firebase 永久刪除此筆夜市資料。</p>
+                <div className="flex justify-center gap-3">
+                  <button
+                    onClick={() => setDeleteConfirmId(null)}
+                    className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={() => handleDelete(deleteConfirmId)}
+                    className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-sm font-medium shadow-sm transition"
+                  >
+                    確認刪除
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // 渲染 React 元件到頁面
+    const rootElement = document.getElementById("root");
+    const root = ReactDOM.createRoot(rootElement);
+    root.render(<App />);
+  </script>
 </body>
 </html>

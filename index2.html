@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>台灣夜市美食景點導覽</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- FontAwesome 圖示套件 -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <!-- React & ReactDOM CDN -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <!-- Babel CDN (用於在瀏覽器直接解析 JSX) -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- Firebase JS SDK (Compat 版本) -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+</head>
+<body class="bg-gray-900 text-gray-100 font-sans min-h-screen">
+
+  <!-- React 渲染根節點 -->
+  <div id="root"></div>
+
+  <!-- React JSX 程式碼 -->
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // Firebase 連線設定
+    const firebaseConfig = {
+      apiKey: "AIzaSyBwUineN_xl21Sw04sVQEK3RQ4ldbNnv8o",
+      authDomain: "test123-a143c.firebaseapp.com",
+      projectId: "test123-a143c",
+      storageBucket: "test123-a143c.firebasestorage.app",
+      messagingSenderId: "533136080003",
+      appId: "1:533136080003:web:e985d82b0e2b5912e16fb6",
+      measurementId: "G-BFZ1SK2GPT"
+    };
+
+    // 初始化 Firebase
+    if (!firebase.apps.length) {
+      firebase.initializeApp(firebaseConfig);
+    }
+    const db = firebase.firestore();
+    const COLLECTION_NAME = "NightMarket";
+
+    // 預設占位圖片
+    const DEFAULT_IMG = "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=1200&q=80";
+
+    function App() {
+      const [items, setItems] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [currentIndex, setCurrentIndex] = useState(0);
+      const [isAutoPlay, setIsAutoPlay] = useState(true);
+      const [searchTerm, setSearchTerm] = useState("");
+
+      // 讀取 Firebase 夜市資料
+      useEffect(() => {
+        const unsubscribe = db.collection(COLLECTION_NAME).onSnapshot(
+          (snapshot) => {
+            const list = snapshot.docs.map((doc) => ({
+              id: doc.id,
+              ...doc.data()
+            }));
+            setItems(list);
+            setLoading(false);
+          },
+          (error) => {
+            console.error("讀取 NightMarket 資料庫失敗：", error);
+            setLoading(false);
+          }
+        );
+
+        return () => unsubscribe();
+      }, []);
+
+      // 輪播自動播放定時器
+      useEffect(() => {
+        if (!isAutoPlay || items.length <= 1) return;
+
+        const timer = setInterval(() => {
+          setCurrentIndex((prevIndex) => (prevIndex + 1) % items.length);
+        }, 5000); // 5 秒切換一次
+
+        return () => clearInterval(timer);
+      }, [isAutoPlay, items.length]);
+
+      // 上一張輪播
+      const handlePrev = () => {
+        setCurrentIndex((prev) => (prev === 0 ? items.length - 1 : prev - 1));
+      };
+
+      // 下一張輪播
+      const handleNext = () => {
+        setCurrentIndex((prev) => (prev + 1) % items.length);
+      };
+
+      // 產生 Google Maps 導航連結
+      const getGoogleMapUrl = (item) => {
+        if (item.lat && item.lon) {
+          return `https://www.google.com/maps/search/?api=1&query=${item.lat},${item.lon}`;
+        }
+        if (item.address) {
+          return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.address)}`;
+        }
+        return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.name)}`;
+      };
+
+      // 搜尋過濾列表
+      const filteredItems = items.filter(item => 
+        (item.name && item.name.includes(searchTerm)) ||
+        (item.address && item.address.includes(searchTerm)) ||
+        (item.text && item.text.includes(searchTerm))
+      );
+
+      return (
+        <div className="min-h-screen flex flex-col bg-gray-950">
+          {/* 導覽頁首 */}
+          <nav className="bg-gray-900/80 backdrop-blur-md border-b border-gray-800 sticky top-0 z-40">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-orange-500 to-amber-400 flex items-center justify-center text-gray-950 font-bold text-xl shadow-lg shadow-orange-500/20">
+                  <i className="fa-solid fa-utensils"></i>
+                </div>
+                <div>
+                  <span className="text-lg font-black tracking-wider bg-gradient-to-r from-amber-200 via-orange-400 to-rose-400 bg-clip-text text-transparent">
+                    台灣夜市地圖
+                  </span>
+                  <span className="hidden sm:inline-block text-xs text-gray-400 ml-2">Taiwan Night Markets</span>
+                </div>
+              </div>
+
+              {/* 搜尋框 */}
+              <div className="relative w-48 sm:w-64">
+                <input
+                  type="text"
+                  placeholder="搜尋夜市、地址..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-9 pr-4 py-1.5 bg-gray-800 border border-gray-700 rounded-full text-xs text-gray-200 placeholder-gray-400 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 transition"
+                />
+                <i className="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-xs text-gray-400"></i>
+              </div>
+            </div>
+          </nav>
+
+          {/* 主要內容 */}
+          <main className="flex-1">
+            {loading ? (
+              <div className="flex flex-col items-center justify-center h-[500px] text-gray-400">
+                <i className="fa-solid fa-spinner fa-spin text-4xl text-amber-400 mb-4"></i>
+                <p className="text-sm">正在探索美食景點資料庫...</p>
+              </div>
+            ) : items.length === 0 ? (
+              <div className="text-center py-32 px-4">
+                <i className="fa-solid fa-store-slash text-5xl text-gray-700 mb-4"></i>
+                <h2 className="text-xl font-bold text-gray-400 mb-2">目前尚無夜市資料</h2>
+                <p className="text-gray-500 text-sm">請透過後台系統新增第一筆夜市景點！</p>
+              </div>
+            ) : (
+              <>
+                {/* ================= 輪播區塊 (Hero Carousel) ================= */}
+                <section 
+                  className="relative h-[550px] sm:h-[600px] lg:h-[680px] w-full overflow-hidden bg-gray-900 group"
+                  onMouseEnter={() => setIsAutoPlay(false)}
+                  onMouseLeave={() => setIsAutoPlay(true)}
+                >
+                  {items.map((item, index) => {
+                    const isActive = index === currentIndex;
+                    const bgUrl = item.img_url ? item.img_url : DEFAULT_IMG;
+
+                    return (
+                      <div
+                        key={item.id}
+                        className={`absolute inset-0 transition-opacity duration-1000 ease-in-out ${
+                          isActive ? "opacity-100 z-10" : "opacity-0 z-0 pointer-events-none"
+                        }`}
+                      >
+                        {/* 背景縮圖 */}
+                        <div
+                          className="absolute inset-0 bg-cover bg-center transform scale-105 transition-transform duration-[10000ms] ease-out"
+                          style={{
+                            backgroundImage: `url('${bgUrl}')`,
+                            transform: isActive ? "scale(1)" : "scale(1.1)"
+                          }}
+                        ></div>
+
+                        {/* 黑色漸層防護罩（讓文字保持高清晰度） */}
+                        <div className="absolute inset-0 bg-gradient-to-t from-gray-950 via-gray-950/60 to-black/30"></div>
+
+                        {/* 輪播文字與詳細資訊內容 */}
+                        <div className="relative z-20 max-w-7xl mx-auto h-full px-6 sm:px-8 lg:px-12 flex flex-col justify-end pb-20 sm:pb-24">
+                          <div className="max-w-2xl space-y-4 animate-fade-in">
+                            {/* 標籤 */}
+                            <div className="inline-flex items-center gap-2 px-3 py-1 bg-amber-400/20 border border-amber-400/40 backdrop-blur-md rounded-full text-amber-300 text-xs font-semibold">
+                              <i className="fa-solid fa-fire text-amber-400"></i>
+                              <span>熱門夜市推薦</span>
+                            </div>
+
+                            {/* 夜市名稱 */}
+                            <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black text-white tracking-tight drop-shadow-md">
+                              {item.name}
+                            </h1>
+
+                            {/* 描述 */}
+                            <p className="text-gray-200 text-sm sm:text-base leading-relaxed line-clamp-3 font-light backdrop-blur-sm bg-black/20 p-3 rounded-xl border border-white/10">
+                              {item.text || "暫無夜市特色說明..."}
+                            </p>
+
+                            {/* 地址與經緯度資訊區塊 */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 text-xs text-gray-300">
+                              {/* 地址 */}
+                              <div className="flex items-start gap-2.5 bg-gray-900/80 backdrop-blur-md p-3 rounded-xl border border-gray-800">
+                                <i className="fa-solid fa-location-dot text-rose-400 text-base mt-0.5"></i>
+                                <div>
+                                  <span className="block text-gray-400 font-medium mb-0.5">夜市地址</span>
+                                  <span className="text-gray-100">{item.address || "未提供詳細地址"}</span>
+                                </div>
+                              </div>
+
+                              {/* 經緯度 */}
+                              <div className="flex items-start gap-2.5 bg-gray-900/80 backdrop-blur-md p-3 rounded-xl border border-gray-800">
+                                <i className="fa-solid fa-compass text-indigo-400 text-base mt-0.5"></i>
+                                <div>
+                                  <span className="block text-gray-400 font-medium mb-0.5">地理座標</span>
+                                  {(item.lat !== undefined && item.lat !== null && item.lat !== "") ||
+                                   (item.lon !== undefined && item.lon !== null && item.lon !== "") ? (
+                                    <span className="font-mono text-gray-100">
+                                      {item.lat ?? "-"}° N, {item.lon ?? "-"}° E
+                                    </span>
+                                  ) : (
+                                    <span className="text-gray-500 italic">未提供經緯度</span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* 導航按鈕 */}
+                            <div className="pt-2">
+                              <a
+                                href={getGoogleMapUrl(item)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-gray-950 font-bold px-5 py-2.5 rounded-xl shadow-lg shadow-orange-500/25 transition transform active:scale-95 text-sm"
+                              >
+                                <i className="fa-solid fa-diamond-turn-right"></i>
+                                <span>開啟 Google 地圖導航</span>
+                              </a>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* 左右切換箭頭按鈕 */}
+                  {items.length > 1 && (
+                    <>
+                      <button
+                        onClick={handlePrev}
+                        className="absolute left-4 top-1/2 -translate-y-1/2 z-30 w-12 h-12 rounded-full bg-black/40 hover:bg-black/70 border border-white/20 text-white flex items-center justify-center transition opacity-0 group-hover:opacity-100 hover:scale-110 active:scale-95 backdrop-blur-sm"
+                        title="上一張"
+                      >
+                        <i className="fa-solid fa-chevron-left text-lg"></i>
+                      </button>
+                      <button
+                        onClick={handleNext}
+                        className="absolute right-4 top-1/2 -translate-y-1/2 z-30 w-12 h-12 rounded-full bg-black/40 hover:bg-black/70 border border-white/20 text-white flex items-center justify-center transition opacity-0 group-hover:opacity-100 hover:scale-110 active:scale-95 backdrop-blur-sm"
+                        title="下一張"
+                      >
+                        <i className="fa-solid fa-chevron-right text-lg"></i>
+                      </button>
+                    </>
+                  )}
+
+                  {/* 輪播下方指示點 (Indicators) */}
+                  {items.length > 1 && (
+                    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 bg-black/40 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10">
+                      {items.map((_, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => setCurrentIndex(idx)}
+                          className={`h-2 rounded-full transition-all duration-300 ${
+                            idx === currentIndex
+                              ? "w-8 bg-amber-400"
+                              : "w-2 bg-gray-500/60 hover:bg-gray-300"
+                          }`}
+                          title={`前往第 ${idx + 1} 頁`}
+                        ></button>
+                      ))}
+                    </div>
+                  )}
+                </section>
+
+                {/* ================= 下方完整景點列表網格 (Grid List) ================= */}
+                <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
+                  <div className="flex items-center justify-between mb-8 border-b border-gray-800 pb-4">
+                    <div>
+                      <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                        <i className="fa-solid fa-grip text-amber-400"></i>
+                        <span>探索全部夜市</span>
+                      </h2>
+                      <p className="text-xs text-gray-400 mt-1">點擊卡片可切換至上方大圖播放或直接開啟導航</p>
+                    </div>
+                    <span className="text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 px-3 py-1 rounded-full font-mono">
+                      共 {filteredItems.length} 處夜市
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {filteredItems.map((item, index) => {
+                      const realIndex = items.findIndex(i => i.id === item.id);
+                      return (
+                        <div
+                          key={item.id}
+                          className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden hover:border-gray-700 transition duration-300 flex flex-col group hover:-translate-y-1 hover:shadow-xl hover:shadow-amber-500/5"
+                        >
+                          {/* 卡片圖 */}
+                          <div 
+                            className="relative h-48 bg-gray-800 overflow-hidden cursor-pointer"
+                            onClick={() => {
+                              if (realIndex !== -1) setCurrentIndex(realIndex);
+                              window.scrollTo({ top: 0, behavior: 'smooth' });
+                            }}
+                          >
+                            <img
+                              src={item.img_url || DEFAULT_IMG}
+                              alt={item.name}
+                              className="w-full h-full object-cover group-hover:scale-105 transition duration-500"
+                              onError={(e) => {
+                                e.target.onerror = null;
+                                e.target.src = DEFAULT_IMG;
+                              }}
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-t from-gray-900 via-transparent to-transparent"></div>
+                            <span className="absolute bottom-3 left-4 text-lg font-bold text-white group-hover:text-amber-400 transition">
+                              {item.name}
+                            </span>
+                          </div>
+
+                          {/* 卡片內容 */}
+                          <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
+                            <p className="text-xs text-gray-400 line-clamp-2 leading-relaxed">
+                              {item.text || "無詳細描述"}
+                            </p>
+
+                            <div className="space-y-2 text-xs border-t border-gray-800/80 pt-3">
+                              {/* 地址 */}
+                              <div className="flex items-center gap-2 text-gray-300">
+                                <i className="fa-solid fa-location-dot text-rose-400 w-4 text-center"></i>
+                                <span className="truncate">{item.address || "未提供地址"}</span>
+                              </div>
+
+                              {/* 經緯度 */}
+                              <div className="flex items-center gap-2 text-gray-400 font-mono">
+                                <i className="fa-solid fa-compass text-indigo-400 w-4 text-center"></i>
+                                {item.lat && item.lon ? (
+                                  <span>{item.lat}, {item.lon}</span>
+                                ) : (
+                                  <span className="text-gray-600 italic">無座標資訊</span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* 操作按鈕 */}
+                            <div className="flex gap-2 pt-2">
+                              <button
+                                onClick={() => {
+                                  if (realIndex !== -1) setCurrentIndex(realIndex);
+                                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                                }}
+                                className="flex-1 py-2 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-medium rounded-lg transition text-center"
+                              >
+                                上方焦點查看
+                              </button>
+                              <a
+                                href={getGoogleMapUrl(item)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-3 py-2 bg-amber-400/10 hover:bg-amber-400/20 border border-amber-400/30 text-amber-300 text-xs font-medium rounded-lg transition flex items-center gap-1"
+                                title="開啟 Google 地圖"
+                              >
+                                <i className="fa-solid fa-location-arrow"></i>
+                                地圖
+                              </a>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              </>
+            )}
+          </main>
+
+          {/* 頁尾 */}
+          <footer className="bg-gray-900 border-t border-gray-800 py-8 text-center text-xs text-gray-500">
+            <div className="max-w-7xl mx-auto px-4">
+              <p>© 2026 台灣夜市導覽網 Taiwan Night Market Guide. All rights reserved.</p>
+            </div>
+          </footer>
+        </div>
+      );
+    }
+
+    // 渲染 React 元件
+    const rootElement = document.getElementById("root");
+    const root = ReactDOM.createRoot(rootElement);
+    root.render(<App />);
+  </script>
+</body>
+</html>
