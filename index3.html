@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>景點探索圖台 - 預設選取首筆版</title>
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- FontAwesome 圖示套件 -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+  <!-- React & ReactDOM CDN -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+  <!-- Babel CDN (解析 JSX) -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- OpenLayers 7.5.0 CDN -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@7.5.0/ol.css">
+  <script src="https://cdn.jsdelivr.net/npm/ol@7.5.0/dist/ol.js"></script>
+
+  <!-- Firebase JS SDK -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+
+  <style>
+    /* OpenLayers 控制項客製化 */
+    .ol-zoom { top: 1rem; right: 1rem; left: auto; }
+    .ol-zoom button { background-color: rgba(15, 23, 42, 0.9) !important; color: #38bdf8 !important; border: 1px solid rgba(56, 189, 248, 0.5) !important; border-radius: 0.5rem !important; backdrop-filter: blur(8px); }
+    .ol-attribution { background: rgba(15, 23, 42, 0.85) !important; color: #94a3b8 !important; border-radius: 0.5rem 0 0 0; font-size: 10px; }
+    .ol-attribution a { color: #38bdf8 !important; }
+
+    /* 客製化懸浮氣泡卡片指針箭頭 */
+    .map-card-popup::after {
+      content: '';
+      position: absolute;
+      bottom: -8px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 0;
+      height: 0;
+      border-left: 8px solid transparent;
+      border-right: 8px solid transparent;
+      border-top: 8px solid rgba(15, 23, 42, 0.95);
+    }
+
+    /* 隱藏滾動條 */
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans min-h-screen overflow-hidden">
+
+  <!-- React 根節點 -->
+  <div id="root"></div>
+
+  <!-- React JSX 邏輯 -->
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // Firebase 連線設定
+    const firebaseConfig = {
+      apiKey: "AIzaSyBwUineN_xl21Sw04sVQEK3RQ4ldbNnv8o",
+      authDomain: "test123-a143c.firebaseapp.com",
+      projectId: "test123-a143c",
+      storageBucket: "test123-a143c.firebasestorage.app",
+      messagingSenderId: "533136080003",
+      appId: "1:533136080003:web:e985d82b0e2b5912e16fb6",
+      measurementId: "G-BFZ1SK2GPT"
+    };
+
+    if (!firebase.apps.length) {
+      firebase.initializeApp(firebaseConfig);
+    }
+    const db = firebase.firestore();
+    const COLLECTION_NAME = "NightMarket";
+
+    // 預設圖片
+    const DEFAULT_IMG = "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=800&q=80";
+
+    // 經緯度校正
+    const parseCoords = (item) => {
+      let rawLon = parseFloat(item.lon);
+      let rawLat = parseFloat(item.lat);
+
+      if (isNaN(rawLon) || isNaN(rawLat)) return null;
+
+      if (rawLon < 50 && rawLat > 50) {
+        const temp = rawLon;
+        rawLon = rawLat;
+        rawLat = temp;
+      }
+
+      return [rawLon, rawLat];
+    };
+
+    // Google 地圖圖層
+    const MAP_LAYERS = {
+      google_road: {
+        name: "Google 街道圖",
+        icon: "fa-map",
+        url: 'https://mt{0-3}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}'
+      },
+      google_hybrid: {
+        name: "Google 衛星混合",
+        icon: "fa-layer-group",
+        url: 'https://mt{0-3}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'
+      },
+      google_sat: {
+        name: "Google 衛星圖",
+        icon: "fa-earth-asia",
+        url: 'https://mt{0-3}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}'
+      },
+      osm: {
+        name: "OpenStreetMap",
+        icon: "fa-globe",
+        url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
+      }
+    };
+
+    function App() {
+      const [items, setItems] = useState([]);
+      const [dataLoading, setDataLoading] = useState(true);
+      const [mapIsReady, setMapIsReady] = useState(false);
+      const [selectedItem, setSelectedItem] = useState(null);
+      const [searchTerm, setSearchTerm] = useState("");
+      const [isFavorites, setIsFavorites] = useState(false);
+      const [favoriteIds, setFavoriteIds] = useState([]);
+      const [activeBaseLayer, setActiveBaseLayer] = useState("google_road");
+
+      const mapRef = useRef(null);
+      const olMap = useRef(null);
+      const baseTileLayerRef = useRef(null);
+      const overlaysRef = useRef([]);
+
+      // 1. 讀取 Firestore 資料，並自動預設選取第一筆
+      useEffect(() => {
+        const unsubscribe = db.collection(COLLECTION_NAME).onSnapshot(
+          (snapshot) => {
+            const list = snapshot.docs.map((doc) => {
+              const data = doc.data();
+              return {
+                id: doc.id,
+                ...data,
+                lon: data.lon !== undefined ? data.lon : null,
+                lat: data.lat !== undefined ? data.lat : null
+              };
+            });
+
+            setItems(list);
+            setDataLoading(false);
+
+            // 若尚未選取任何景點且有資料，預設自動選取第 1 筆
+            if (list.length > 0) {
+              setSelectedItem(prev => prev ? prev : list[0]);
+            }
+          },
+          (error) => {
+            console.error("讀取 NightMarket 失敗：", error);
+            setDataLoading(false);
+          }
+        );
+
+        return () => unsubscribe();
+      }, []);
+
+      // 2. 初始化 OpenLayers
+      useEffect(() => {
+        if (!mapRef.current) return;
+
+        let isMounted = true;
+
+        const initMapInstance = () => {
+          if (typeof window.ol === 'undefined') return false;
+
+          try {
+            if (olMap.current) return true;
+
+            const baseLayer = new ol.layer.Tile({
+              source: new ol.source.XYZ({
+                url: MAP_LAYERS.google_road.url,
+                attributions: '&copy; Google Maps'
+              })
+            });
+            baseTileLayerRef.current = baseLayer;
+
+            const view = new ol.View({
+              center: ol.proj.fromLonLat([120.9605, 23.6978]),
+              zoom: 9,
+              minZoom: 5,
+              maxZoom: 20
+            });
+
+            const map = new ol.Map({
+              target: mapRef.current,
+              layers: [baseLayer],
+              view: view,
+              controls: ol.control.defaults.defaults().extend([])
+            });
+
+            olMap.current = map;
+
+            if (isMounted) {
+              setMapIsReady(true);
+              setTimeout(() => { map.updateSize(); }, 100);
+            }
+
+            return true;
+          } catch (err) {
+            console.error("OpenLayers 初始化失敗：", err);
+            return false;
+          }
+        };
+
+        if (!initMapInstance()) {
+          const interval = setInterval(() => {
+            if (initMapInstance()) clearInterval(interval);
+          }, 200);
+
+          const timeout = setTimeout(() => {
+            clearInterval(interval);
+            if (isMounted) setMapIsReady(true);
+          }, 3000);
+
+          return () => {
+            isMounted = false;
+            clearInterval(interval);
+            clearTimeout(timeout);
+          };
+        }
+
+        return () => { isMounted = false; };
+      }, []);
+
+      // 切換底圖
+      const handleSwitchBaseLayer = (layerKey) => {
+        setActiveBaseLayer(layerKey);
+        if (baseTileLayerRef.current && MAP_LAYERS[layerKey]) {
+          const newSource = new ol.source.XYZ({
+            url: MAP_LAYERS[layerKey].url,
+            attributions: layerKey.startsWith('google') ? '&copy; Google Maps' : '&copy; OpenStreetMap'
+          });
+          baseTileLayerRef.current.setSource(newSource);
+        }
+      };
+
+      // 3. 渲染地標：僅選取的項目彈出縮圖卡片
+      useEffect(() => {
+        if (!olMap.current || items.length === 0) return;
+
+        const map = olMap.current;
+
+        // 清除舊 Overlay
+        overlaysRef.current.forEach(overlay => map.removeOverlay(overlay));
+        overlaysRef.current = [];
+
+        items.forEach((item) => {
+          const coords = parseCoords(item);
+          if (!coords) return;
+
+          try {
+            const coordMap = ol.proj.fromLonLat(coords);
+            const isSelected = selectedItem?.id === item.id;
+
+            // 建立 HTML Overlay
+            const containerDiv = document.createElement('div');
+            containerDiv.className = 'relative flex flex-col items-center group cursor-pointer';
+
+            if (isSelected) {
+              // 【被選取狀態】：顯示精緻縮圖卡片 + 高亮 Pin
+              containerDiv.innerHTML = `
+                <!-- 縮圖氣泡卡片 -->
+                <div class="map-card-popup mb-2 flex items-center gap-2.5 p-2 pr-3 bg-slate-900/95 border border-cyan-400 ring-4 ring-cyan-400/30 rounded-2xl shadow-2xl backdrop-blur-md z-30 transition">
+                  <div class="w-32 h-24 rounded-xl overflow-hidden flex-shrink-0 bg-slate-950 border border-slate-700/80 relative">
+                    <img 
+                      src="${item.img_url || DEFAULT_IMG}" 
+                      class="w-full h-full object-cover" 
+                      onerror="this.src='${DEFAULT_IMG}'"
+                    />
+                    <div class="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-transparent to-transparent"></div>
+                  </div>
+
+                  <div class="text-left flex flex-col justify-center min-w-[100px] gap-1">
+                    <div class="text-xs font-black text-slate-100 tracking-wide max-w-[130px] truncate">
+                      ${item.name || '未命名夜市'}
+                    </div>
+                    <div class="text-[11px] font-medium text-slate-400 flex items-center gap-1">
+                      <i class="fa-solid fa-location-dot text-rose-400 text-[10px]"></i>
+                      <span class="max-w-[110px] truncate">${item.address ? item.address.substring(0, 8) : '特色景點'}</span>
+                    </div>
+                    <div class="mt-0.5 flex items-center gap-1 text-[11px] font-bold text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded w-fit border border-amber-400/20">
+                      <i class="fa-solid fa-star text-[10px]"></i>
+                      <span>4.8</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 點擊高亮 Pin 針腳 -->
+                <div class="relative flex items-center justify-center z-30">
+                  <span class="absolute w-8 h-8 rounded-full bg-cyan-400/40 animate-ping opacity-75"></span>
+                  <div class="relative z-10 w-8 h-8 rounded-full bg-gradient-to-tr from-cyan-500 to-blue-600 border-2 border-white flex items-center justify-center text-white shadow-xl">
+                    <i class="fa-solid fa-utensils text-xs"></i>
+                  </div>
+                </div>
+              `;
+            } else {
+              // 【預設未點擊狀態】：僅顯示 Pin 圖示 (+ Hover 小名稱標籤)
+              containerDiv.innerHTML = `
+                <!-- Hover 時顯示簡短名稱 -->
+                <div class="hidden group-hover:block absolute bottom-9 bg-slate-900/90 text-slate-100 text-[11px] font-bold px-2.5 py-1 rounded-lg border border-slate-700/80 whitespace-nowrap shadow-xl z-20 backdrop-blur-md">
+                  ${item.name || '未命名夜市'}
+                </div>
+
+                <!-- 簡潔 Pin 針腳 -->
+                <div class="relative flex items-center justify-center">
+                  <div class="w-8 h-8 rounded-full bg-slate-900/90 border border-slate-700/80 group-hover:border-cyan-400 group-hover:bg-slate-800 flex items-center justify-center text-cyan-400 shadow-md group-hover:scale-110 transition duration-200">
+                    <i class="fa-solid fa-utensils text-xs"></i>
+                  </div>
+                </div>
+              `;
+            }
+
+            containerDiv.onclick = (e) => {
+              e.stopPropagation();
+              handleSelectSpot(item);
+            };
+
+            const overlay = new ol.Overlay({
+              position: coordMap,
+              positioning: 'bottom-center',
+              element: containerDiv,
+              offset: [0, 0],
+              stopEvent: true
+            });
+
+            map.addOverlay(overlay);
+            overlaysRef.current.push(overlay);
+
+          } catch (err) {
+            console.error("繪製景點卡片失敗：", item, err);
+          }
+        });
+
+      }, [items, selectedItem]);
+
+      // 選擇景點
+      const handleSelectSpot = (item) => {
+        setSelectedItem(item);
+      };
+
+      // 收藏切換
+      const toggleFavorite = (id) => {
+        setFavoriteIds(prev => 
+          prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+        );
+      };
+
+      // 導航連結
+      const getGoogleMapUrl = (item) => {
+        if (!item) return "#";
+        const coords = parseCoords(item);
+        if (coords) {
+          return `https://www.google.com/maps/search/?api=1&query=${coords[1]},${coords[0]}`;
+        }
+        if (item.address) {
+          return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.address)}`;
+        }
+        return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.name || '')}`;
+      };
+
+      // 搜尋過濾
+      const filteredItems = items.filter(item => {
+        const matchesSearch = (item.name && item.name.includes(searchTerm)) ||
+                              (item.address && item.address.includes(searchTerm));
+        const matchesFav = isFavorites ? favoriteIds.includes(item.id) : true;
+        return matchesSearch && matchesFav;
+      });
+
+      return (
+        <div className="flex flex-col h-screen w-screen overflow-hidden bg-slate-950">
+          
+          {/* 頂部 Header */}
+          <header className="h-16 bg-slate-900/90 border-b border-slate-800/80 px-6 flex items-center justify-between backdrop-blur-md z-30 flex-shrink-0">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center text-white font-black text-lg shadow-lg shadow-cyan-500/20">
+                <i className="fa-solid fa-store"></i>
+              </div>
+              <div>
+                <h1 className="text-lg font-bold tracking-wider bg-gradient-to-r from-slate-100 via-cyan-200 to-cyan-400 bg-clip-text text-transparent">
+                  景點探索圖台
+                </h1>
+                <span className="hidden sm:inline-block text-[10px] text-slate-500 font-mono">Google Maps & GIS Engine</span>
+              </div>
+            </div>
+
+            {/* 搜尋框 */}
+            <div className="relative w-72 hidden md:block">
+              <input
+                type="text"
+                placeholder="搜尋夜市名稱或地址..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-9 pr-4 py-1.5 bg-slate-950/80 border border-slate-700/60 rounded-full text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition"
+              />
+              <i className="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-xs text-slate-500"></i>
+            </div>
+
+            {/* 篩選按鈕 */}
+            <div className="flex items-center gap-3 text-xs font-medium">
+              <button 
+                onClick={() => setIsFavorites(false)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition ${!isFavorites ? 'bg-cyan-500/10 border-cyan-500/40 text-cyan-300' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
+              >
+                <i className="fa-solid fa-map"></i>
+                <span>景點總覽 ({items.length})</span>
+              </button>
+
+              <button 
+                onClick={() => setIsFavorites(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition ${isFavorites ? 'bg-rose-500/10 border-rose-500/40 text-rose-300' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
+              >
+                <i className="fa-solid fa-heart text-rose-500"></i>
+                <span>我的收藏 ({favoriteIds.length})</span>
+              </button>
+            </div>
+          </header>
+
+          {/* 主區域 */}
+          <div className="flex-1 flex relative overflow-hidden">
+            
+            {/* 左側地圖 */}
+            <div className="flex-1 relative bg-slate-950">
+              
+              {/* 載入中遮罩 */}
+              {(!mapIsReady || dataLoading) && (
+                <div className="absolute inset-0 z-40 bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center text-slate-400">
+                  <i className="fa-solid fa-spinner fa-spin text-4xl text-cyan-400 mb-4"></i>
+                  <p className="text-xs font-medium text-slate-300">載入 Google 地圖中...</p>
+                </div>
+              )}
+
+              {/* 地圖掛載點 */}
+              <div ref={mapRef} className="w-full h-full"></div>
+
+              {/* 左上角底圖切換 */}
+              <div className="absolute top-4 left-4 z-20 flex items-center gap-1.5 p-1.5 bg-slate-900/90 border border-slate-700/80 rounded-xl backdrop-blur-md shadow-2xl">
+                {Object.entries(MAP_LAYERS).map(([key, config]) => (
+                  <button
+                    key={key}
+                    onClick={() => handleSwitchBaseLayer(key)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                      activeBaseLayer === key
+                        ? 'bg-cyan-500 text-slate-950 font-bold shadow-md shadow-cyan-500/20'
+                        : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                    }`}
+                  >
+                    <i className={`fa-solid ${config.icon}`}></i>
+                    <span>{config.name}</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* 底部景點橫條 */}
+              <div className="absolute bottom-6 left-6 right-6 z-20 pointer-events-none hidden lg:block">
+                <div className="flex items-center gap-2.5 overflow-x-auto pb-2 pointer-events-auto no-scrollbar max-w-2xl">
+                  {filteredItems.map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => handleSelectSpot(item)}
+                      className={`flex-shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs backdrop-blur-md transition shadow-lg ${
+                        selectedItem?.id === item.id 
+                          ? 'bg-cyan-500 text-slate-950 font-bold border-cyan-400 shadow-cyan-500/30 scale-105' 
+                          : 'bg-slate-900/90 text-slate-300 border-slate-700/80 hover:bg-slate-800'
+                      }`}
+                    >
+                      <i className="fa-solid fa-utensils text-[10px]"></i>
+                      <span>{item.name || '未命名'}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* 右側詳情邊欄 */}
+            <aside className="w-full md:w-96 bg-slate-900/95 border-l border-slate-800/80 flex flex-col z-30 backdrop-blur-xl shadow-2xl">
+              {selectedItem ? (
+                <div className="flex-1 flex flex-col h-full overflow-y-auto">
+                  
+                  {/* 標題頭部 */}
+                  <div className="p-6 border-b border-slate-800/80 flex justify-between items-start">
+                    <div>
+                      <div className="text-xs font-semibold text-cyan-400 tracking-wider uppercase mb-1 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+                        景點詳細內容
+                      </div>
+                      <h2 className="text-2xl font-black text-slate-100 tracking-tight">
+                        {selectedItem.name || "未命名夜市"}
+                      </h2>
+                      <div className="flex items-center gap-1.5 text-xs text-slate-400 mt-1">
+                        <i className="fa-solid fa-location-dot text-rose-400"></i>
+                        <span>{selectedItem.address || "未提供詳細地址"}</span>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => toggleFavorite(selectedItem.id)}
+                      className={`w-10 h-10 rounded-xl border flex items-center justify-center text-base transition ${
+                        favoriteIds.includes(selectedItem.id)
+                          ? 'bg-rose-500/10 border-rose-500/40 text-rose-500'
+                          : 'bg-slate-800/60 border-slate-700/60 text-slate-400 hover:text-slate-200'
+                      }`}
+                      title="收藏景點"
+                    >
+                      <i className={`fa-${favoriteIds.includes(selectedItem.id) ? 'solid' : 'regular'} fa-heart`}></i>
+                    </button>
+                  </div>
+
+                  {/* 大景點照 */}
+                  <div className="px-6 py-4">
+                    <div className="relative h-56 rounded-2xl overflow-hidden border border-slate-700/60 group bg-slate-950 shadow-inner">
+                      <img
+                        src={selectedItem.img_url || DEFAULT_IMG}
+                        alt={selectedItem.name}
+                        className="w-full h-full object-cover group-hover:scale-105 transition duration-500"
+                        onError={(e) => {
+                          e.target.onerror = null;
+                          e.target.src = DEFAULT_IMG;
+                        }}
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent"></div>
+                      <div className="absolute bottom-3 left-3 text-xs text-amber-400 flex items-center gap-1 bg-slate-950/70 backdrop-blur-md px-2.5 py-1 rounded-lg border border-amber-400/20">
+                        <i className="fa-solid fa-star"></i>
+                        <span className="font-bold">4.8</span>
+                        <span className="text-slate-400 text-[10px]">(熱門景點)</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 文字描述 */}
+                  <div className="px-6 py-2 space-y-4 flex-1">
+                    <div className="text-xs text-slate-300 leading-relaxed bg-slate-950/50 p-4 rounded-xl border border-slate-800/60 font-light whitespace-pre-wrap">
+                      {selectedItem.text || "暫無詳細描述說明..."}
+                    </div>
+
+                    <div className="space-y-3 pt-2 text-xs">
+                      <div className="flex items-center justify-between p-3 rounded-xl bg-slate-800/40 border border-slate-800">
+                        <span className="text-slate-400 flex items-center gap-2">
+                          <i className="fa-solid fa-map-pin text-cyan-400"></i> 地點地址
+                        </span>
+                        <span className="text-slate-200 font-medium truncate max-w-[180px]">
+                          {selectedItem.address || "未標示"}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between p-3 rounded-xl bg-slate-800/40 border border-slate-800">
+                        <span className="text-slate-400 flex items-center gap-2">
+                          <i className="fa-solid fa-compass text-indigo-400"></i> 經緯度座標
+                        </span>
+                        <span className="text-slate-200 font-mono text-[11px]">
+                          {selectedItem.lat && selectedItem.lon 
+                            ? `${selectedItem.lat}, ${selectedItem.lon}`
+                            : "未設定"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 導航按鈕 */}
+                  <div className="p-6 border-t border-slate-800/80 bg-slate-900/80 sticky bottom-0">
+                    <a
+                      href={getGoogleMapUrl(selectedItem)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white font-bold py-3 rounded-xl shadow-lg shadow-cyan-500/20 transition active:scale-95 text-xs"
+                    >
+                      <i className="fa-solid fa-diamond-turn-right"></i>
+                      <span>開啟 Google 地圖導航</span>
+                    </a>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-500">
+                  <i className="fa-solid fa-map-location-dot text-4xl mb-3 text-slate-700"></i>
+                  <p className="text-xs">請點擊地圖上的景點圖示檢視詳情</p>
+                </div>
+              )}
+            </aside>
+
+          </div>
+        </div>
+      );
+    }
+
+    // 正確 React 18 掛載
+    const rootElement = document.getElementById("root");
+    const root = ReactDOM.createRoot(rootElement);
+    root.render(<App />);
+  </script>
+</body>
+</html>
